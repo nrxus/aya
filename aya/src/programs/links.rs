@@ -6,7 +6,7 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     ffi::CString,
     io,
-    os::fd::RawFd,
+    os::fd::{IntoRawFd, RawFd},
     path::{Path, PathBuf},
 };
 
@@ -213,10 +213,10 @@ impl PinnedLink {
                 call: "BPF_OBJ_GET",
                 code,
                 io_error,
-            })? as RawFd;
+            })?;
         Ok(PinnedLink::new(
             path.as_ref().to_path_buf(),
-            FdLink::new(fd),
+            FdLink::new(fd.into_raw_fd()),
         ))
     }
 

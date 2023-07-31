@@ -46,10 +46,10 @@ use crate::{
 /// use aya::maps::SockHash;
 /// use aya::programs::SkMsg;
 ///
-/// let mut intercept_egress = SockHash::<_, u32>::try_from(bpf.map("INTERCEPT_EGRESS").unwrap())?;
+/// let mut intercept_egress = SockHash::<_, u32>::try_from(bpf.maps.get("INTERCEPT_EGRESS").unwrap())?;
 /// let map_fd = intercept_egress.fd()?;
 ///
-/// let prog: &mut SkMsg = bpf.program_mut("intercept_egress_packet").unwrap().try_into()?;
+/// let prog: &mut SkMsg = bpf.programs.get_mut("intercept_egress_packet").unwrap().try_into()?;
 /// prog.load()?;
 /// prog.attach(map_fd)?;
 ///

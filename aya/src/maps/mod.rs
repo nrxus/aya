@@ -22,9 +22,9 @@
 //! use aya::maps::SockMap;
 //! use aya::programs::SkMsg;
 //!
-//! let intercept_egress = SockMap::try_from(bpf.map_mut("INTERCEPT_EGRESS").unwrap())?;
+//! let intercept_egress = SockMap::try_from(bpf.maps.get("INTERCEPT_EGRESS").unwrap())?;
 //! let map_fd = intercept_egress.fd()?;
-//! let prog: &mut SkMsg = bpf.program_mut("intercept_egress_packet").unwrap().try_into()?;
+//! let prog: &mut SkMsg = bpf.programs.get_mut("intercept_egress_packet").unwrap().try_into()?;
 //! prog.load()?;
 //! prog.attach(map_fd)?;
 //!
@@ -42,7 +42,7 @@ use std::{
     marker::PhantomData,
     mem,
     ops::Deref,
-    os::fd::{AsFd, AsRawFd, OwnedFd, RawFd},
+    os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd},
     path::Path,
     ptr,
     sync::Arc,
@@ -194,10 +194,15 @@ pub enum MapError {
 }
 
 /// A map file descriptor.
-pub struct MapFd(RawFd);
+pub struct MapFd<'f>(BorrowedFd<'f>);
 
-impl AsRawFd for MapFd {
+impl AsRawFd for MapFd<'_> {
     fn as_raw_fd(&self) -> RawFd {
+        self.0.as_raw_fd()
+    }
+}
+impl AsFd for MapFd<'_> {
+    fn as_fd(&self) -> BorrowedFd<'_> {
         self.0
     }
 }
@@ -486,7 +491,7 @@ pub(crate) fn check_v_size<V>(map: &MapData) -> Result<(), MapError> {
 #[derive(Debug)]
 pub struct MapData {
     pub(crate) obj: obj::Map,
-    pub(crate) fd: Option<RawFd>,
+    pub(crate) fd: Option<OwnedFd>,
     pub(crate) btf_fd: Option<Arc<OwnedFd>>,
     /// Indicates if this map has been pinned to bpffs
     pub pinned: bool,
@@ -521,11 +526,12 @@ impl MapData {
                 code,
                 io_error,
             }
-        })? as RawFd;
+        })?;
 
+        let raw_fd = fd.as_raw_fd();
         self.fd = Some(fd);
 
-        Ok(fd)
+        Ok(raw_fd)
     }
 
     pub(crate) fn open_pinned<P: AsRef<Path>>(
@@ -541,11 +547,12 @@ impl MapData {
         let fd = bpf_get_object(&path_string).map_err(|(_, io_error)| MapError::SyscallError {
             call: "BPF_OBJ_GET",
             io_error,
-        })? as RawFd;
+        })?;
 
+        let raw_fd = fd.as_raw_fd();
         self.fd = Some(fd);
 
-        Ok(fd)
+        Ok(raw_fd)
     }
 
     /// Loads a map from a pinned path in bpffs.
@@ -563,12 +570,13 @@ impl MapData {
         let fd = bpf_get_object(&path_string).map_err(|(_, io_error)| MapError::SyscallError {
             call: "BPF_OBJ_GET",
             io_error,
-        })? as RawFd;
-
-        let info = bpf_map_get_info_by_fd(fd).map_err(|io_error| MapError::SyscallError {
-            call: "BPF_MAP_GET_INFO_BY_FD",
-            io_error,
         })?;
+
+        let info =
+            bpf_map_get_info_by_fd(fd.as_raw_fd()).map_err(|io_error| MapError::SyscallError {
+                call: "BPF_MAP_GET_INFO_BY_FD",
+                io_error,
+            })?;
 
         Ok(MapData {
             obj: parse_map_info(info, PinningType::ByName),
@@ -583,11 +591,12 @@ impl MapData {
     /// If loading from a BPF Filesystem (bpffs) you should use [`Map::from_pin`](crate::maps::MapData::from_pin).
     /// This API is intended for cases where you have received a valid BPF FD from some other means.
     /// For example, you received an FD over Unix Domain Socket.
-    pub fn from_fd(fd: RawFd) -> Result<MapData, MapError> {
-        let info = bpf_map_get_info_by_fd(fd).map_err(|io_error| MapError::SyscallError {
-            call: "BPF_OBJ_GET",
-            io_error,
-        })?;
+    pub fn from_fd(fd: OwnedFd) -> Result<MapData, MapError> {
+        let info =
+            bpf_map_get_info_by_fd(fd.as_raw_fd()).map_err(|io_error| MapError::SyscallError {
+                call: "BPF_OBJ_GET",
+                io_error,
+            })?;
 
         Ok(MapData {
             obj: parse_map_info(info, PinningType::None),
@@ -597,8 +606,11 @@ impl MapData {
         })
     }
 
-    pub(crate) fn fd_or_err(&self) -> Result<RawFd, MapError> {
-        self.fd.ok_or(MapError::NotCreated)
+    pub(crate) fn fd_or_err(&self) -> Result<BorrowedFd<'_>, MapError> {
+        self.fd
+            .as_ref()
+            .map(|f| f.as_fd())
+            .ok_or(MapError::NotCreated)
     }
 
     pub(crate) fn pin<P: AsRef<Path>>(&mut self, name: &str, path: P) -> Result<(), PinError> {
@@ -606,7 +618,7 @@ impl MapData {
             return Err(PinError::AlreadyPinned { name: name.into() });
         }
         let map_path = path.as_ref().join(name);
-        let fd = self.fd.ok_or(PinError::NoFd {
+        let fd = self.fd.as_ref().ok_or(PinError::NoFd {
             name: name.to_string(),
         })?;
         let path_string = CString::new(map_path.to_string_lossy().into_owned()).map_err(|e| {
@@ -614,9 +626,11 @@ impl MapData {
                 error: e.to_string(),
             }
         })?;
-        bpf_pin_object(fd, &path_string).map_err(|(_, io_error)| PinError::SyscallError {
-            name: "BPF_OBJ_PIN",
-            io_error,
+        bpf_pin_object(fd.as_raw_fd(), &path_string).map_err(|(_, io_error)| {
+            PinError::SyscallError {
+                name: "BPF_OBJ_PIN",
+                io_error,
+            }
         })?;
         self.pinned = true;
         Ok(())
@@ -625,28 +639,21 @@ impl MapData {
     /// Returns the file descriptor of the map.
     ///
     /// Can be converted to [`RawFd`] using [`AsRawFd`].
-    pub fn fd(&self) -> Option<MapFd> {
-        self.fd.map(MapFd)
+    pub fn fd(&self) -> Option<MapFd<'_>> {
+        self.fd.as_ref().map(|f| MapFd(f.as_fd()))
     }
-}
 
-impl Drop for MapData {
-    fn drop(&mut self) {
-        // TODO: Replace this with an OwnedFd once that is stabilized.
-        if let Some(fd) = self.fd.take() {
-            unsafe { libc::close(fd) };
-        }
-    }
-}
-
-impl Clone for MapData {
-    fn clone(&self) -> MapData {
-        MapData {
+    /// Attempts to clone the `MapData`
+    ///
+    /// Fails if the file descriptor cannot be copied
+    pub fn try_clone(&self) -> io::Result<Self> {
+        let fd = self.fd.as_ref().map(|f| f.try_clone()).transpose()?;
+        Ok(MapData {
             obj: self.obj.clone(),
-            fd: self.fd.map(|fd| unsafe { libc::dup(fd) }),
+            fd,
             btf_fd: self.btf_fd.as_ref().map(Arc::clone),
             pinned: self.pinned,
-        }
+        })
     }
 }
 
@@ -897,7 +904,7 @@ mod tests {
 
         let mut map = new_map();
         assert_matches!(map.create("foo"), Ok(42));
-        assert_eq!(map.fd, Some(42));
+        assert_eq!(map.fd.as_ref().map(|f| f.as_raw_fd()), Some(42));
         assert_matches!(map.create("foo"), Err(MapError::AlreadyCreated { .. }));
     }
 
@@ -918,6 +925,6 @@ mod tests {
             assert_eq!(code, -42);
             assert_eq!(io_error.raw_os_error(), Some(EFAULT));
         }
-        assert_eq!(map.fd, None);
+        assert!(map.fd.is_none());
     }
 }

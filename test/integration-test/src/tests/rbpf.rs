@@ -1,5 +1,5 @@
 use core::{mem::size_of, ptr::null_mut, slice::from_raw_parts};
-use std::collections::HashMap;
+use std::{collections::HashMap, os::fd::BorrowedFd};
 
 use assert_matches::assert_matches;
 use aya_obj::{generated::bpf_insn, Object, ProgramSection};
@@ -57,7 +57,7 @@ fn use_map_with_rbpf() {
         );
 
         let map_id = if name == "map_1" { 0 } else { 1 };
-        let fd = map_id as i32 | 0xCAFE00;
+        let fd = unsafe { BorrowedFd::borrow_raw(map_id as i32 | 0xCAFE00) };
         maps.insert(name.to_owned(), (fd, map.clone()));
 
         unsafe {

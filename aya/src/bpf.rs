@@ -4,7 +4,7 @@ use std::{
     ffi::CString,
     fs, io,
     os::{
-        fd::{OwnedFd, RawFd},
+        fd::{AsFd, OwnedFd, RawFd},
         raw::c_int,
     },
     path::{Path, PathBuf},
@@ -527,7 +527,7 @@ impl<'a> BpfLoader<'a> {
 
         obj.relocate_maps(
             maps.iter()
-                .map(|(s, data)| (s.as_str(), data.fd, &data.obj)),
+                .map(|(s, data)| (s.as_str(), data.fd.as_ref().map(|f| f.as_fd()), &data.obj)),
             &text_sections,
         )?;
         obj.relocate_calls(&text_sections)?;
@@ -748,9 +748,12 @@ impl<'a> Default for BpfLoader<'a> {
 
 /// The main entry point into the library, used to work with eBPF programs and maps.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Bpf {
-    maps: HashMap<String, Map>,
-    programs: HashMap<String, Program>,
+    /// maps
+    pub maps: HashMap<String, Map>,
+    /// programs
+    pub programs: HashMap<String, Program>,
 }
 
 impl Bpf {

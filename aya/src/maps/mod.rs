@@ -42,7 +42,7 @@ use std::{
     marker::PhantomData,
     mem,
     ops::Deref,
-    os::fd::{AsFd as _, AsRawFd, IntoRawFd as _, OwnedFd, RawFd},
+    os::fd::{AsFd as _, AsRawFd, BorrowedFd, OwnedFd, RawFd},
     path::Path,
     ptr,
     sync::Arc,
@@ -486,26 +486,21 @@ pub(crate) fn check_v_size<V>(map: &MapData) -> Result<(), MapError> {
 #[derive(Debug)]
 pub struct MapData {
     pub(crate) obj: obj::Map,
-    pub(crate) fd: Option<RawFd>,
+    pub(crate) fd: Option<OwnedFd>,
     pub(crate) btf_fd: Option<Arc<OwnedFd>>,
     /// Indicates if this map has been pinned to bpffs
     pub pinned: bool,
 }
 
 impl MapData {
-    /// Creates a new map with the provided `name`
-    pub fn create(&mut self, name: &str) -> Result<RawFd, MapError> {
-        if self.fd.is_some() {
-            return Err(MapError::AlreadyCreated { name: name.into() });
-        }
-
+    pub(crate) fn load(&self, name: &str) -> Result<OwnedFd, MapError> {
         let c_name = CString::new(name).map_err(|_| MapError::InvalidName { name: name.into() })?;
 
         #[cfg(not(test))]
         let kernel_version = KernelVersion::current().unwrap();
         #[cfg(test)]
         let kernel_version = KernelVersion::new(0xff, 0xff, 0xff);
-        let fd = bpf_create_map(
+        bpf_create_map(
             &c_name,
             &self.obj,
             self.btf_fd.as_ref().map(|f| f.as_fd()),
@@ -521,33 +516,35 @@ impl MapData {
                 code,
                 io_error,
             }
-        })? as RawFd;
+        })
+    }
 
+    /// Creates a new map with the provided `name`
+    pub fn create(&mut self, name: &str) -> Result<RawFd, MapError> {
+        if self.fd.is_some() {
+            return Err(MapError::AlreadyCreated { name: name.into() });
+        }
+
+        let fd = self.load(name)?;
+        let raw_fd = fd.as_raw_fd();
         self.fd = Some(fd);
-
-        Ok(fd)
+        Ok(raw_fd)
     }
 
     pub(crate) fn open_pinned<P: AsRef<Path>>(
-        &mut self,
+        &self,
         name: &str,
         path: P,
-    ) -> Result<RawFd, MapError> {
+    ) -> Result<OwnedFd, MapError> {
         if self.fd.is_some() {
             return Err(MapError::AlreadyCreated { name: name.into() });
         }
         let map_path = path.as_ref().join(name);
         let path_string = CString::new(map_path.to_str().unwrap()).unwrap();
-        let fd = bpf_get_object(&path_string)
-            .map_err(|(_, io_error)| MapError::SyscallError {
-                call: "BPF_OBJ_GET",
-                io_error,
-            })?
-            .into_raw_fd();
-
-        self.fd = Some(fd);
-
-        Ok(fd)
+        bpf_get_object(&path_string).map_err(|(_, io_error)| MapError::SyscallError {
+            call: "BPF_OBJ_GET",
+            io_error,
+        })
     }
 
     /// Loads a map from a pinned path in bpffs.
@@ -575,7 +572,7 @@ impl MapData {
 
         Ok(MapData {
             obj: parse_map_info(info, PinningType::ByName),
-            fd: Some(fd.into_raw_fd()),
+            fd: Some(fd),
             btf_fd: None,
             pinned: true,
         })
@@ -595,14 +592,17 @@ impl MapData {
 
         Ok(MapData {
             obj: parse_map_info(info, PinningType::None),
-            fd: Some(fd.into_raw_fd()),
+            fd: Some(fd),
             btf_fd: None,
             pinned: false,
         })
     }
 
-    pub(crate) fn fd_or_err(&self) -> Result<RawFd, MapError> {
-        self.fd.ok_or(MapError::NotCreated)
+    pub(crate) fn fd_or_err(&self) -> Result<BorrowedFd<'_>, MapError> {
+        self.fd
+            .as_ref()
+            .map(|fd| fd.as_fd())
+            .ok_or(MapError::NotCreated)
     }
 
     pub(crate) fn pin<P: AsRef<Path>>(&mut self, name: &str, path: P) -> Result<(), PinError> {
@@ -610,7 +610,7 @@ impl MapData {
             return Err(PinError::AlreadyPinned { name: name.into() });
         }
         let map_path = path.as_ref().join(name);
-        let fd = self.fd.ok_or(PinError::NoFd {
+        let fd = self.fd.as_ref().ok_or(PinError::NoFd {
             name: name.to_string(),
         })?;
         let path_string = CString::new(map_path.to_string_lossy().into_owned()).map_err(|e| {
@@ -618,9 +618,11 @@ impl MapData {
                 error: e.to_string(),
             }
         })?;
-        bpf_pin_object(fd, &path_string).map_err(|(_, io_error)| PinError::SyscallError {
-            name: "BPF_OBJ_PIN",
-            io_error,
+        bpf_pin_object(fd.as_raw_fd(), &path_string).map_err(|(_, io_error)| {
+            PinError::SyscallError {
+                name: "BPF_OBJ_PIN",
+                io_error,
+            }
         })?;
         self.pinned = true;
         Ok(())
@@ -630,27 +632,20 @@ impl MapData {
     ///
     /// Can be converted to [`RawFd`] using [`AsRawFd`].
     pub fn fd(&self) -> Option<MapFd> {
-        self.fd.map(MapFd)
+        self.fd.as_ref().map(|f| MapFd(f.as_raw_fd()))
     }
-}
 
-impl Drop for MapData {
-    fn drop(&mut self) {
-        // TODO: Replace this with an OwnedFd once that is stabilized.
-        if let Some(fd) = self.fd.take() {
-            unsafe { libc::close(fd) };
-        }
-    }
-}
-
-impl Clone for MapData {
-    fn clone(&self) -> MapData {
-        MapData {
+    /// Attempts to clone MapData
+    ///
+    /// Fails if the the Map cannot be cloned
+    pub fn try_clone(&self) -> io::Result<MapData> {
+        let fd = self.fd.as_ref().map(|fd| fd.try_clone()).transpose()?;
+        Ok(MapData {
+            fd,
             obj: self.obj.clone(),
-            fd: self.fd.map(|fd| unsafe { libc::dup(fd) }),
             btf_fd: self.btf_fd.as_ref().map(Arc::clone),
             pinned: self.pinned,
-        }
+        })
     }
 }
 
@@ -901,7 +896,7 @@ mod tests {
 
         let mut map = new_map();
         assert_matches!(map.create("foo"), Ok(42));
-        assert_eq!(map.fd, Some(42));
+        assert_eq!(map.fd.as_ref().map(|f| f.as_raw_fd()), Some(42));
         assert_matches!(map.create("foo"), Err(MapError::AlreadyCreated { .. }));
     }
 
@@ -922,6 +917,6 @@ mod tests {
             assert_eq!(code, -42);
             assert_eq!(io_error.raw_os_error(), Some(EFAULT));
         }
-        assert_eq!(map.fd, None);
+        assert!(map.fd.is_none());
     }
 }

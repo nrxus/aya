@@ -4,7 +4,7 @@ use std::{
     ffi::CString,
     fs, io,
     os::{
-        fd::{OwnedFd, RawFd},
+        fd::{AsFd as _, OwnedFd},
         raw::c_int,
     },
     path::{Path, PathBuf},
@@ -489,10 +489,10 @@ impl<'a> BpfLoader<'a> {
                     match map.open_pinned(&name, path) {
                         Ok(fd) => {
                             map.pinned = true;
-                            fd as RawFd
+                            fd
                         }
                         Err(_) => {
-                            let fd = map.create(&name)?;
+                            let fd = map.load(&name)?;
                             map.pin(&name, path).map_err(|error| MapError::PinError {
                                 name: Some(name.to_string()),
                                 error,
@@ -501,21 +501,27 @@ impl<'a> BpfLoader<'a> {
                         }
                     }
                 }
-                PinningType::None => map.create(&name)?,
+                PinningType::None => map.load(&name)?,
             };
             if !map.obj.data().is_empty() && map.obj.section_kind() != BpfSectionKind::Bss {
-                bpf_map_update_elem_ptr(fd, &0 as *const _, map.obj.data_mut().as_mut_ptr(), 0)
-                    .map_err(|(_, io_error)| MapError::SyscallError {
-                        call: "bpf_map_update_elem",
-                        io_error,
-                    })?;
+                bpf_map_update_elem_ptr(
+                    fd.as_fd(),
+                    &0 as *const _,
+                    map.obj.data_mut().as_mut_ptr(),
+                    0,
+                )
+                .map_err(|(_, io_error)| MapError::SyscallError {
+                    call: "bpf_map_update_elem",
+                    io_error,
+                })?;
             }
             if map.obj.section_kind() == BpfSectionKind::Rodata {
-                bpf_map_freeze(fd).map_err(|(_, io_error)| MapError::SyscallError {
+                bpf_map_freeze(fd.as_fd()).map_err(|(_, io_error)| MapError::SyscallError {
                     call: "bpf_map_freeze",
                     io_error,
                 })?;
             }
+            map.fd = Some(fd);
             maps.insert(name, map);
         }
 
@@ -527,7 +533,7 @@ impl<'a> BpfLoader<'a> {
 
         obj.relocate_maps(
             maps.iter()
-                .map(|(s, data)| (s.as_str(), data.fd, &data.obj)),
+                .map(|(s, data)| (s.as_str(), data.fd.as_ref().map(|f| f.as_fd()), &data.obj)),
             &text_sections,
         )?;
         obj.relocate_calls(&text_sections)?;

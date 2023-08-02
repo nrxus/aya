@@ -109,7 +109,7 @@ impl<T: Borrow<MapData>, K: Pod> SockHash<T, K> {
     /// The returned file descriptor can be used to attach programs that work with
     /// socket maps, like [`SkMsg`](crate::programs::SkMsg) and [`SkSkb`](crate::programs::SkSkb).
     pub fn fd(&self) -> Result<SockMapFd, MapError> {
-        Ok(SockMapFd(self.inner.borrow().fd_or_err()?))
+        Ok(SockMapFd(self.inner.borrow().fd_or_err()?.as_raw_fd()))
     }
 }
 

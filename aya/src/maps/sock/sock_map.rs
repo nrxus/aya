@@ -17,7 +17,7 @@ use crate::{
 /// sockets.
 ///
 /// A `SockMap` can also be used to redirect packets to sockets contained by the
-/// map using `bpf_redirect_map()`, `bpf_sk_redirect_map()` etc.    
+/// map using `bpf_redirect_map()`, `bpf_sk_redirect_map()` etc.
 ///
 /// # Minimum kernel version
 ///
@@ -65,7 +65,7 @@ impl<T: Borrow<MapData>> SockMap<T> {
     /// The returned file descriptor can be used to attach programs that work with
     /// socket maps, like [`SkMsg`](crate::programs::SkMsg) and [`SkSkb`](crate::programs::SkSkb).
     pub fn fd(&self) -> Result<SockMapFd, MapError> {
-        Ok(SockMapFd(self.inner.borrow().fd_or_err()?))
+        Ok(SockMapFd(self.inner.borrow().fd_or_err()?.as_raw_fd()))
     }
 }
 

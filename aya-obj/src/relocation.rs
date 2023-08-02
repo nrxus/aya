@@ -1,6 +1,7 @@
 //! Program relocation handling.
 
 use core::mem;
+use std::os::fd::{AsRawFd as _, BorrowedFd};
 
 use alloc::{borrow::ToOwned, collections::BTreeMap, string::String};
 use log::debug;
@@ -114,7 +115,7 @@ pub(crate) struct Symbol {
 
 impl Object {
     /// Relocates the map references
-    pub fn relocate_maps<'a, I: Iterator<Item = (&'a str, Option<i32>, &'a Map)>>(
+    pub fn relocate_maps<'a, I: Iterator<Item = (&'a str, Option<BorrowedFd<'a>>, &'a Map)>>(
         &mut self,
         maps: I,
         text_sections: &HashSet<usize>,
@@ -187,8 +188,8 @@ impl Object {
 fn relocate_maps<'a, I: Iterator<Item = &'a Relocation>>(
     fun: &mut Function,
     relocations: I,
-    maps_by_section: &HashMap<usize, (&str, Option<i32>, &Map)>,
-    maps_by_symbol: &HashMap<usize, (&str, Option<i32>, &Map)>,
+    maps_by_section: &HashMap<usize, (&str, Option<BorrowedFd<'a>>, &Map)>,
+    maps_by_symbol: &HashMap<usize, (&str, Option<BorrowedFd<'a>>, &Map)>,
     symbol_table: &HashMap<usize, Symbol>,
     text_sections: &HashSet<usize>,
 ) -> Result<(), RelocationError> {
@@ -277,7 +278,7 @@ fn relocate_maps<'a, I: Iterator<Item = &'a Relocation>>(
         } else {
             instructions[ins_index].set_src_reg(BPF_PSEUDO_MAP_FD as u8);
         }
-        instructions[ins_index].imm = map_fd;
+        instructions[ins_index].imm = map_fd.as_raw_fd();
     }
 
     Ok(())
@@ -588,7 +589,10 @@ mod test {
         let maps_by_section = HashMap::new();
 
         let map = fake_legacy_map(1);
-        let maps_by_symbol = HashMap::from([(1, ("test_map", Some(1), &map))]);
+        let maps_by_symbol = HashMap::from([(
+            1,
+            ("test_map", Some(unsafe { BorrowedFd::borrow_raw(1) }), &map),
+        )]);
 
         relocate_maps(
             &mut fun,
@@ -642,8 +646,22 @@ mod test {
         let map_1 = fake_legacy_map(1);
         let map_2 = fake_legacy_map(2);
         let maps_by_symbol = HashMap::from([
-            (1, ("test_map_1", Some(1), &map_1)),
-            (2, ("test_map_2", Some(2), &map_2)),
+            (
+                1,
+                (
+                    "test_map_1",
+                    Some(unsafe { BorrowedFd::borrow_raw(1) }),
+                    &map_1,
+                ),
+            ),
+            (
+                2,
+                (
+                    "test_map_2",
+                    Some(unsafe { BorrowedFd::borrow_raw(2) }),
+                    &map_2,
+                ),
+            ),
         ]);
 
         relocate_maps(
@@ -683,7 +701,10 @@ mod test {
         let maps_by_section = HashMap::new();
 
         let map = fake_btf_map(1);
-        let maps_by_symbol = HashMap::from([(1, ("test_map", Some(1), &map))]);
+        let maps_by_symbol = HashMap::from([(
+            1,
+            ("test_map", Some(unsafe { BorrowedFd::borrow_raw(1) }), &map),
+        )]);
 
         relocate_maps(
             &mut fun,
@@ -737,8 +758,22 @@ mod test {
         let map_1 = fake_btf_map(1);
         let map_2 = fake_btf_map(2);
         let maps_by_symbol = HashMap::from([
-            (1, ("test_map_1", Some(1), &map_1)),
-            (2, ("test_map_2", Some(2), &map_2)),
+            (
+                1,
+                (
+                    "test_map_1",
+                    Some(unsafe { BorrowedFd::borrow_raw(1) }),
+                    &map_1,
+                ),
+            ),
+            (
+                2,
+                (
+                    "test_map_2",
+                    Some(unsafe { BorrowedFd::borrow_raw(2) }),
+                    &map_2,
+                ),
+            ),
         ]);
 
         relocate_maps(

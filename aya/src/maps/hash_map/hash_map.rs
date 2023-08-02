@@ -105,7 +105,11 @@ impl<T: Borrow<MapData>, K: Pod, V: Pod> IterableMap<K, V> for HashMap<T, K, V> 
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::c_long, io};
+    use std::{
+        ffi::c_long,
+        io,
+        os::fd::{FromRawFd as _, OwnedFd},
+    };
 
     use assert_matches::assert_matches;
     use libc::{EFAULT, ENOENT};
@@ -231,7 +235,7 @@ mod tests {
     fn test_new_ok() {
         let mut map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -243,7 +247,7 @@ mod tests {
     fn test_try_from_ok() {
         let map_data = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -268,7 +272,7 @@ mod tests {
                 symbol_index: None,
                 data: Vec::new(),
             }),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -284,7 +288,7 @@ mod tests {
 
         let mut map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -308,7 +312,7 @@ mod tests {
 
         let mut map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -329,7 +333,7 @@ mod tests {
 
         let mut map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -344,7 +348,7 @@ mod tests {
 
         let mut map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -368,7 +372,7 @@ mod tests {
 
         let mut map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -382,7 +386,7 @@ mod tests {
         override_syscall(|_| sys_error(EFAULT));
         let map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -405,7 +409,7 @@ mod tests {
         });
         let map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -442,7 +446,7 @@ mod tests {
         });
         let map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -491,7 +495,7 @@ mod tests {
 
         let map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -524,7 +528,7 @@ mod tests {
         });
         let map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -559,7 +563,7 @@ mod tests {
         });
         let map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -597,7 +601,7 @@ mod tests {
         });
         let map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -636,7 +640,7 @@ mod tests {
         });
         let map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
@@ -681,7 +685,7 @@ mod tests {
         });
         let map = MapData {
             obj: new_obj_map(),
-            fd: Some(42),
+            fd: Some(unsafe { OwnedFd::from_raw_fd(42) }),
             pinned: false,
             btf_fd: None,
         };
